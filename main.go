@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func (f *forwarder) Forward() {
 				continue
 			}
 
-			logrus.Infof("Established connection %s \n", conn.RemoteAddr())
+			logrus.Infof("Established connection %s %s -> %s\n", conn.RemoteAddr(), f.Local, f.Remote)
 
 			f.Copy(conn, rconn)
 		}
@@ -73,6 +74,9 @@ func (f *forwarder) Copy(lconn, rconn net.Conn) {
 }
 
 func main() {
+	// CPU Cores * 2
+	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
+
 	for _, proxy := range proxyConf {
 		conf := strings.Split(proxy, ":")
 
