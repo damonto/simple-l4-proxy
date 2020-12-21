@@ -2,10 +2,8 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io"
 	"net"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -41,36 +39,42 @@ func (f *forwarder) Forward() {
 	ln, err := net.Listen("tcp", f.Local)
 	if err != nil {
 		logrus.Errorf("Failed to listen local address %s", f.Local)
-		os.Exit(1)
+		panic(err)
 	}
-	fmt.Printf("Proxy server running on %s \n", f.Local)
+	logrus.Infof("Proxy server running on %s \n", f.Local)
 
 	for {
 		if conn, err := ln.Accept(); err == nil {
-			rconn, err := net.DialTimeout("tcp", f.Remote, time.Second*1)
+			dst, err := net.DialTimeout("tcp", f.Remote, time.Millisecond*500)
 			if err != nil {
 				logrus.Errorf("Establish connection with remote server %s: %v", f.Remote, err)
 				conn.Close() // close manual
 				continue
 			}
 
-			logrus.Infof("Established connection %s %s -> %s\n", conn.RemoteAddr(), f.Local, f.Remote)
+			logrus.Infof("Established connection %s %s src->dst %s\n", conn.RemoteAddr(), f.Local, f.Remote)
 
-			f.Copy(conn, rconn)
+			f.Copy(conn, dst)
 		}
 	}
 }
 
-func (f *forwarder) Copy(lconn, rconn net.Conn) {
-	defer rconn.Close()
-	defer lconn.Close()
+func (f *forwarder) Copy(src, dst net.Conn) {
+	defer dst.Close()
+	defer src.Close()
+
+	done := make(chan struct{})
 
 	go func() {
-		n, err := io.Copy(lconn, rconn)
+		n, err := io.Copy(dst, src)
 		logrus.Infof("Copied %d bytes from %s to %s %v \n", n, f.Local, f.Remote, err)
+		done <- struct{}{}
 	}()
-	n, err := io.Copy(rconn, lconn)
+
+	n, err := io.Copy(src, dst)
 	logrus.Infof("Copied %d bytes from %s to %s %v \n", n, f.Remote, f.Local, err)
+
+	<-done
 }
 
 func main() {
