@@ -6,6 +6,7 @@ import (
 	"net"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -31,50 +32,54 @@ func init() {
 }
 
 type forwarder struct {
-	Local  string
-	Remote string
+	local  string
+	remote string
 }
 
 func (f *forwarder) Forward() {
-	ln, err := net.Listen("tcp", f.Local)
+	ln, err := net.Listen("tcp", f.local)
 	if err != nil {
-		logrus.Errorf("Failed to listen local address %s", f.Local)
+		logrus.Errorf("failed to listen local address %s", f.local)
 		panic(err)
 	}
-	logrus.Infof("Proxy server running on %s \n", f.Local)
+	logrus.Infof("proxy server running on %s \n", f.local)
 
 	for {
 		if conn, err := ln.Accept(); err == nil {
-			dst, err := net.DialTimeout("tcp", f.Remote, time.Millisecond*500)
-			if err != nil {
-				logrus.Errorf("Establish connection with remote server %s: %v", f.Remote, err)
-				conn.Close() // close manual
-				continue
-			}
-
-			logrus.Infof("Established connection %s %s src->dst %s\n", conn.RemoteAddr(), f.Local, f.Remote)
-
-			f.Copy(conn, dst)
+			go func(conn net.Conn) {
+				err := f.Handle(conn)
+				if err != nil {
+					logrus.Errorf("failed to establish connection %v", err)
+				}
+			}(conn)
 		}
 	}
 }
 
-func (f *forwarder) Copy(src, dst net.Conn) {
+func (f *forwarder) Handle(conn net.Conn) error {
+	defer conn.Close()
+	dst, err := net.DialTimeout("tcp", f.remote, time.Second)
+	if err != nil {
+		return err
+	}
 	defer dst.Close()
-	defer src.Close()
 
-	done := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(2)
 
-	go func() {
-		n, err := io.Copy(dst, src)
-		logrus.Infof("Copied %d bytes from %s to %s %v \n", n, f.Local, f.Remote, err)
-		done <- struct{}{}
-	}()
+	go f.Copy(dst, conn, &wg)
+	go f.Copy(conn, dst, &wg)
 
-	n, err := io.Copy(src, dst)
-	logrus.Infof("Copied %d bytes from %s to %s %v \n", n, f.Remote, f.Local, err)
+	wg.Wait()
 
-	<-done
+	return nil
+}
+
+func (f *forwarder) Copy(src, dst net.Conn, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	n, err := io.Copy(dst, src)
+	logrus.Infof("%s src->dst %s %d bytes %v", src.RemoteAddr().String(), dst.RemoteAddr().String(), n, err)
 }
 
 func main() {
@@ -87,13 +92,13 @@ func main() {
 		f := &forwarder{}
 		if len(conf) == 3 {
 			f = &forwarder{
-				Local:  ":" + conf[0],
-				Remote: conf[1] + ":" + conf[2],
+				local:  ":" + conf[0],
+				remote: conf[1] + ":" + conf[2],
 			}
 		} else {
 			f = &forwarder{
-				Local:  conf[0] + ":" + conf[1],
-				Remote: conf[2] + ":" + conf[3],
+				local:  conf[0] + ":" + conf[1],
+				remote: conf[2] + ":" + conf[3],
 			}
 		}
 
