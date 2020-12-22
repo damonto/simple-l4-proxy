@@ -1,4 +1,4 @@
-module github.com/damonto/l4-proxy
+module github.com/damonto/simple-l4-proxy
 
 go 1.15
 
